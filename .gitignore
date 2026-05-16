@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Probe runtime data
+~/.probe/
+
+# Env / secrets
+.env
+config.local.yaml
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
