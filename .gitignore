@@ -20,3 +20,6 @@ config.local.yaml
 # IDE
 .idea/
 .vscode/
+
+# Local-only scratch scripts
+scripts/
