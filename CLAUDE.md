@@ -4,62 +4,55 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A local-first personal research CLI (`probe`) that ingests research sources (papers, SEC filings, Substack, tweets), extracts structured information, and connects new content to existing knowledge via RAG. Exposes an MCP server so Claude Code can query the knowledge base.
+A local-first personal research **MCP server** (`probe`) that ingests research sources (papers, SEC filings, Substack, tweets, notes), extracts structured information, and connects new content to existing knowledge via RAG. Claude Code is the client: it parses URLs/PDFs/HTML and calls Probe's MCP tools to store, embed, search, and reason.
 
 See `PROJECT_PROBE.md` for the full spec, data model, 3-day build order, and all design decisions.
 
 ## Commands
 
 ```bash
-# Install (editable, with all deps)
-pip install -e .
+# Install (editable, with dev deps)
+pip install -e ".[dev]"
 
-# Run CLI
-probe ingest <url_or_file>
-probe ingest --type tweet          # interactive prompt
-probe ingest --full <url>          # ingest + extract + analyze in one shot
-probe extract <doc_id>
-probe analyze <doc_id>
-probe search "query"
-probe thesis create|list|show|evaluate
-probe serve                        # starts MCP server on localhost:7433
-probe stats
+# CLI — launcher only
+probe serve                        # start the stdio MCP server (primary entry point)
+probe stats                        # out-of-band DB stats (debug)
 
 # Tests
 pytest
 pytest tests/test_ingest.py::test_name   # single test
 ```
 
+Everything else (ingest, search, extract, analyze, thesis) is an **MCP tool**, not a CLI command. Don't add `probe ingest` / `probe search` back.
+
 ## Tech Stack
 
-- Python 3.12, `typer` CLI, `rich` for output
+- Python 3.12, `typer` CLI (launcher only), `rich` for output
 - `sqlite3` + `sqlite-vec` (vector similarity) + `FTS5` (keyword search) — single `~/.probe/probe.db` file
 - `anthropic` SDK (claude-sonnet-4-20250514) for extraction and analysis
 - `sentence-transformers` (all-MiniLM-L6-v2, 384d) for local embeddings
-- `httpx` + `beautifulsoup4` for web, `pymupdf4llm` for PDFs
+- `mcp` for the stdio MCP server
+
+No server-side URL fetching, HTML parsing, or PDF parsing — Claude (the MCP client) does that and passes markdown + provenance through `ingest`.
 
 ## Architecture
 
-Data flows one-way: **Skill → DB → Extraction → Analysis → Thesis**
+Data flows one-way: **ingest() → DB → Extraction → Analysis → Thesis**
 
 ```
 src/probe/
-├── cli.py           # typer app; thin layer, delegates to skills/modules
+├── cli.py           # typer launcher; `probe serve` + `probe stats` only
+├── config.py        # ~/.probe/config.yaml loading
 ├── db.py            # schema creation, sqlite-vec setup, FTS5 virtual table
-├── data_classes.py  # dataclasses: Document, Chunk, IngestResult, etc.
+├── data_classes.py  # dataclasses: Document, Chunk, Provenance, IngestResult, etc.
 ├── embeddings.py    # sentence-transformers wrapper → numpy → BLOB for sqlite-vec
 ├── search.py        # hybrid search: vector cosine + FTS5 BM25, merged via RRF
+├── ingest.py        # single ingest(content, provenance, source_type) entry; per-source_type chunking
+├── markdown_split.py# H1 → title, H2 → sections helper for source_type='markdown'
 ├── llm.py           # Anthropic client wrapper; structured output via tool_use
 ├── analysis.py      # domain-agnostic RAG: top-5 chunks → Anthropic → analyses table
 ├── thesis.py        # thesis CRUD + evaluate_thesis (Claude judges support/contradiction)
-├── mcp_server.py    # stdio MCP server exposing search_knowledge, get_document, etc.
-├── config.py        # ~/.probe/config.yaml loading
-├── skills/          # pluggable ingestion — one module per source type
-│   ├── base.py      # Skill ABC: can_handle(), ingest(), extract()
-│   ├── web.py       # Substack/blogs: httpx → BS4 → ~400-token chunks
-│   ├── pdf.py       # papers/transcripts: pymupdf4llm → chunk with page numbers
-│   ├── tweet.py     # interactive CLI prompt → single chunk
-│   └── markdown.py  # local .md → split on headers
+├── mcp_server.py    # stdio MCP server exposing ingest, search, extract, analyze, etc.
 └── extraction/      # domain-specific LLM extraction; prompts live in prompts/
     ├── paper.py     # PaperExtraction schema
     ├── financial.py # FinancialExtraction schema
@@ -68,9 +61,9 @@ src/probe/
 
 ## Key Invariants
 
-**Provenance is mandatory** — every chunk must be traceable to its source. If a required field can't be auto-extracted (URL, author, title), the CLI prompts for it. Never store a chunk without provenance. See `PROJECT_PROBE.md` for the full provenance table per source type.
+**Provenance is mandatory** — every chunk must be traceable to its source. `Provenance` with no `source_url` and no `raw_path` is rejected. Per-source-type required fields (e.g. tweet needs `author` + `source_url`) are enforced in `ingest.py`. See `PROJECT_PROBE.md` for the full provenance table.
 
-**Skills are selected by URL pattern / file extension** — `cli.py` calls `skill.can_handle()` on each registered skill in order; first match wins. Skills are stateless and must not write to the DB themselves — they return `IngestResult`, and `cli.py` persists it.
+**`source_type` is a string discriminator, not a class hierarchy** — `ingest(content, provenance, source_type)` is the single entry point. `source_type` (e.g. `'markdown'`, `'tweet'`, `'web'`, `'pdf'`) drives per-type chunking and required-field rules inside `ingest.py`. There is no `Skill` ABC, no `can_handle()`, no per-source subclass.
 
 **Hybrid search** — `search.py` runs sqlite-vec cosine similarity and FTS5 BM25 independently, then merges results via reciprocal rank fusion (RRF). Never call one without the other.
 
@@ -86,4 +79,4 @@ This project uses test-driven development. Tests are written first and define th
 
 ## Out of Scope (do not add)
 
-No web UI, no user auth, no Postgres/Chroma/Pinecone, no async pipeline, no automatic re-indexing. Single-user, local, synchronous only.
+No web UI, no human-facing CLI for ingest/search/extract/analyze, no server-side URL fetching or HTML/PDF parsing, no user auth, no Postgres/Chroma/Pinecone, no async pipeline, no automatic re-indexing. Single-user, local, synchronous only.
