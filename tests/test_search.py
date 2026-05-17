@@ -177,6 +177,46 @@ def test_fts_search_on_empty_db_returns_empty(db):
     assert fts_search(db, "anything", limit=5) == []
 
 
+def test_fts_search_handles_hyphenated_query(db):
+    # FTS5 treats '-' as the NOT operator on a bare term; user queries
+    # containing hyphenated words ("old-timers") must not be interpreted that way.
+    from probe.search import fts_search
+
+    doc = _doc()
+    chunks = [
+        _chunk(doc.id, "the old-timers voted guilty", chunk_index=0),
+        _chunk(doc.id, "unrelated content here", chunk_index=1),
+    ]
+    _persist(db, doc, chunks)
+
+    results = fts_search(db, "old-timers voted guilty", limit=5)
+    assert len(results) >= 1
+    assert results[0].chunk_id == chunks[0].id
+
+
+def test_fts_search_does_not_crash_on_fts5_metacharacters(db):
+    # Each query below would raise sqlite3.OperationalError if passed raw to MATCH.
+    from probe.search import fts_search
+
+    doc = _doc()
+    _persist(db, doc, [_chunk(doc.id, "hello world")])
+
+    for query in ['"unterminated', "foo:bar", "foo*bar", "(parens)", "a AND b"]:
+        result = fts_search(db, query, limit=5)
+        assert isinstance(result, list)
+
+
+def test_fts_search_returns_empty_on_blank_query(db):
+    # An empty MATCH expression is itself a syntax error in FTS5; blank input is a no-op.
+    from probe.search import fts_search
+
+    doc = _doc()
+    _persist(db, doc, [_chunk(doc.id, "anything")])
+
+    assert fts_search(db, "", limit=5) == []
+    assert fts_search(db, "   ", limit=5) == []
+
+
 # ---------- rrf_merge ----------
 
 def test_rrf_merge_ranks_overlap_above_unique():

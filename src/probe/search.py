@@ -27,12 +27,25 @@ def vector_search(conn: sqlite3.Connection, query: np.ndarray, limit: int) -> li
     ]
 
 
+def _build_fts_match(query: str) -> str | None:
+    # FTS5's MATCH grammar treats `- : * ( ) "` and bare AND/OR/NOT as operators.
+    # User queries are free text, so quote each whitespace-delimited token to force
+    # literal interpretation. Internal `"` becomes `""` (FTS5 phrase-quote escaping).
+    tokens = [t for t in query.split() if t]
+    if not tokens:
+        return None
+    return " ".join('"' + t.replace('"', '""') + '"' for t in tokens)
+
+
 def fts_search(conn: sqlite3.Connection, query: str, limit: int) -> list[SearchResult]:
+    match = _build_fts_match(query)
+    if match is None:
+        return []
     rows = conn.execute(
         "SELECT c.id, c.document_id, c.content, bm25(chunks_fts) AS rank "
         "FROM chunks_fts JOIN chunks c ON c.rowid = chunks_fts.rowid "
         "WHERE chunks_fts MATCH ? ORDER BY rank ASC LIMIT ?",
-        (query, limit),
+        (match, limit),
     ).fetchall()
     return [
         SearchResult(chunk_id=row[0], document_id=row[1], content=row[2], score=-row[3])
