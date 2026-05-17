@@ -9,28 +9,32 @@ from probe.data_classes import Chunk, Document, IngestResult, Provenance
 from probe.embeddings import embed_batch, to_blob
 
 _MAX_CHARS = 1600
-_KNOWN_SOURCE_TYPES = {"markdown", "tweet", "web", "pdf"}
+# Types with bespoke chunking or extra required fields. Anything outside this set
+# is treated as web-like: open vocabulary (substack, medium, blog, ...) all flow
+# through the generic chunker and require source_url.
+_LOCAL_TYPES = {"markdown", "pdf"}
+_ATOMIC_TYPES = {"tweet"}
 
 
 def _validate_provenance(provenance: Provenance, source_type: str) -> None:
-    if source_type not in _KNOWN_SOURCE_TYPES:
-        raise ValueError(
-            f"Unknown source_type={source_type!r}; "
-            f"must be one of {sorted(_KNOWN_SOURCE_TYPES)}"
-        )
+    if not source_type or not source_type.strip():
+        raise ValueError("source_type must be a non-empty string")
 
     if provenance.source_url is None and provenance.raw_path is None:
         raise ValueError("Provenance must include source_url or raw_path")
 
-    if source_type == "tweet":
+    if source_type in _ATOMIC_TYPES:
         if provenance.source_url is None:
-            raise ValueError("tweet ingestion requires source_url")
+            raise ValueError(f"{source_type} ingestion requires source_url")
         if provenance.author is None:
-            raise ValueError("tweet ingestion requires author")
+            raise ValueError(f"{source_type} ingestion requires author")
+        return
 
-    if source_type == "web":
-        if provenance.source_url is None:
-            raise ValueError("web ingestion requires source_url")
+    if source_type in _LOCAL_TYPES:
+        return
+
+    if provenance.source_url is None:
+        raise ValueError(f"{source_type} ingestion requires source_url")
 
 
 def _extract_markdown_intro(content: str) -> str:
