@@ -1,3 +1,5 @@
+import uuid
+
 from probe.ingest import ingest
 from probe.models import Provenance
 
@@ -74,12 +76,16 @@ def test_ingest_web_payload_preserves_provided_metadata():
     assert result.document.source_type == "web"
     assert result.document.title == "The AI Investment Thesis"
     assert result.document.author == "Jane Doe"
-    assert any("AI Investment Thesis" in c.content for c in result.chunks)
+    assert any("AI Investment Thesis" in c.content for c in result.chunks), (
+        f"Expected 'AI Investment Thesis' in chunk content; got: {[c.content[:80] for c in result.chunks]}"
+    )
     for chunk in result.chunks:
         assert chunk.document_id == result.document.id
 
 
-def test_ingest_pdf_payload_carries_page_hint(pdf_path):
+def test_ingest_pdf_payload_carries_page_hint(tmp_path):
+    fake_pdf = tmp_path / "bert.pdf"
+    fake_pdf.touch()
     parsed = (
         "# BERT: Pre-training of Deep Bidirectional Transformers\n\n"
         "BERT is a method of pre-training language representations.\n"
@@ -88,15 +94,19 @@ def test_ingest_pdf_payload_carries_page_hint(pdf_path):
         content=parsed,
         provenance=Provenance(
             source_url="https://arxiv.org/abs/1810.04805",
-            raw_path=str(pdf_path),
+            raw_path=str(fake_pdf),
             title="BERT: Pre-training of Deep Bidirectional Transformers",
             metadata={"page_number": 1},
         ),
         source_type="pdf",
     )
     assert result.document.source_type == "pdf"
-    assert any("BERT" in c.content for c in result.chunks)
-    assert any(c.metadata.get("page_number") == 1 for c in result.chunks)
+    assert any("BERT" in c.content for c in result.chunks), (
+        f"Expected 'BERT' in chunk content; got: {[c.content[:80] for c in result.chunks]}"
+    )
+    assert any(c.metadata.get("page_number") == 1 for c in result.chunks), (
+        f"Expected page_number=1 on a chunk; got metadata: {[c.metadata for c in result.chunks]}"
+    )
 
 
 def test_long_content_splits_into_multiple_chunks():
@@ -134,5 +144,5 @@ def test_all_chunks_link_back_to_document():
         provenance=Provenance(source_url="https://example.com"),
         source_type="web",
     )
-    assert result.document.id is not None
+    uuid.UUID(result.document.id)  # raises ValueError if not a valid UUID
     assert all(c.document_id == result.document.id for c in result.chunks)
