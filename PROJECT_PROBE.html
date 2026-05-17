@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Probe — Personal Research MCP Server</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-dim: #1f3a5f;
+    --green: #3fb950;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    padding: 2rem;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  h1 {
+    font-size: 2rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: var(--accent);
+  }
+
+  h1 + p { color: var(--text-muted); margin-bottom: 2rem; font-size: 0.95rem; }
+
+  h2 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: var(--green);
+    margin-top: 2.5rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--purple);
+    margin-top: 1.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  p { margin-bottom: 0.8rem; }
+
+  code, pre {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85rem;
+  }
+
+  code {
+    background: var(--surface);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    color: var(--accent);
+  }
+
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    overflow-x: auto;
+    margin: 1rem 0;
+    line-height: 1.5;
+  }
+
+  pre code {
+    background: none;
+    padding: 0;
+    color: var(--text);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: 0.9rem;
+  }
+
+  th {
+    text-align: left;
+    padding: 0.6rem 0.8rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  td {
+    padding: 0.5rem 0.8rem;
+    border: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  .day-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin: 1rem 0;
+  }
+
+  .day-card h3 {
+    margin-top: 0;
+    color: var(--orange);
+    font-size: 1.05rem;
+  }
+
+  .day-card ol {
+    padding-left: 1.5rem;
+    margin: 0.5rem 0;
+  }
+
+  .day-card li {
+    margin-bottom: 0.3rem;
+    font-size: 0.9rem;
+  }
+
+  .day-card .outcome {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+    color: var(--green);
+    font-weight: 500;
+    font-size: 0.9rem;
+  }
+
+  .tag {
+    display: inline-block;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 12px;
+    font-weight: 500;
+    margin-right: 0.3rem;
+  }
+
+  .tag-reuse { background: var(--accent-dim); color: var(--accent); }
+  .tag-build { background: #1a2e1a; color: var(--green); }
+  .tag-stretch { background: #2d2000; color: var(--orange); }
+
+  .not-list {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+  }
+
+  .not-list span { color: var(--red); font-weight: 600; }
+
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin: 1rem 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85rem;
+  }
+
+  .flow-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.4rem 0.8rem;
+  }
+
+  .flow-arrow { color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<h1>Probe</h1>
+<p>Personal Research MCP Server — ingest papers, filings, Substack, tweets → extract → analyze via RAG → expose to Claude Code over stdio</p>
+
+<h2>Architecture</h2>
+
+<p>Probe is an <strong>MCP server first</strong>. Claude Code is the only client. Claude parses PDFs and HTML natively and hands the server already-extracted markdown plus provenance. The server doesn't fetch URLs or parse binary formats.</p>
+
+<div class="flow">
+  <div class="flow-box">Claude Code (MCP client)</div>
+  <span class="flow-arrow">│ stdio</span>
+  <div class="flow-box">probe serve (MCP server)</div>
+</div>
+
+<pre><code>probe serve (MCP server)
+  │
+  ├─ ingest(content, provenance, source_type)   → Chunks + Provenance → SQLite
+  ├─ search_personal_knowledge(query, limit)    → sqlite-vec + FTS5 + RRF
+  ├─ get_document(doc_id)                       → full doc + extractions + analyses
+  ├─ extract(doc_id)                            → Anthropic API → structured output
+  ├─ analyze(doc_id)                            → RAG context + Anthropic API → connections
+  ├─ evaluate_thesis(claim_or_id)               → RAG → support/contradict verdict
+  ├─ list_theses(status)                        → tracked theses
+  └─ add_note(content, tags)                    → ergonomic ingest wrapper</code></pre>
+
+<p>The CLI collapses to a launcher: <code>probe serve</code> (start the MCP server) and optional <code>probe stats</code> (out-of-band DB debugging from the terminal). Everything else is an MCP tool.</p>
+
+<h2>Reuse vs Build</h2>
+
+<table>
+  <tr><th>Component</th><th>Decision</th><th>What</th></tr>
+  <tr><td>Vector store</td><td><span class="tag tag-reuse">reuse</span></td><td><code>sqlite-vec</code> — single file, SIMD, good enough for &lt;100k chunks</td></tr>
+  <tr><td>Keyword search</td><td><span class="tag tag-reuse">reuse</span></td><td>SQLite FTS5 — built-in, no dependencies</td></tr>
+  <tr><td>LLM</td><td><span class="tag tag-reuse">reuse</span></td><td>Anthropic API (<code>claude-sonnet-4-20250514</code>) — already paying for Pro</td></tr>
+  <tr><td>Embeddings</td><td><span class="tag tag-reuse">reuse</span></td><td><code>all-MiniLM-L6-v2</code> via sentence-transformers — local, fast, 384d</td></tr>
+  <tr><td>MCP transport</td><td><span class="tag tag-reuse">reuse</span></td><td><code>mcp</code> Python SDK — stdio server, matches Claude Code integration</td></tr>
+  <tr><td>PDF / HTML parsing</td><td><span class="tag tag-reuse">reuse</span></td><td>Handled by Claude client-side — no server-side parsing needed</td></tr>
+  <tr><td>SEC filings</td><td><span class="tag tag-stretch">stretch</span></td><td><code>edgartools</code> — only data source Claude can't easily reach itself</td></tr>
+  <tr><td>Ingestion engine</td><td><span class="tag tag-build">build</span></td><td><code>ingest.py</code> — single entry + <code>source_type</code> discriminator; <code>markdown_split.py</code> for header splitting</td></tr>
+  <tr><td>RAG analysis</td><td><span class="tag tag-build">build</span></td><td>Cross-document connection engine via Anthropic API</td></tr>
+  <tr><td>Thesis tracking</td><td><span class="tag tag-build">build</span></td><td>Versioned thesis objects linked to evidence chunks</td></tr>
+  <tr><td>MCP server</td><td><span class="tag tag-build">build</span></td><td>stdio MCP exposing 8 tools for Claude Code integration</td></tr>
+  <tr><td>Provenance</td><td><span class="tag tag-build">build</span></td><td>Full audit trail: analysis → extraction → chunk → source URL</td></tr>
+</table>
+
+<h2>Data Model</h2>
+
+<pre><code>-- Every ingested source
+documents (
+    id TEXT PRIMARY KEY,          -- uuid
+    source_type TEXT NOT NULL,    -- 'arxiv', 'substack', 'tweet', 'filing', 'pdf', 'markdown'
+    source_url TEXT,              -- original URL (nullable for pasted text)
+    title TEXT,
+    author TEXT,
+    published_at TEXT,            -- ISO date if known
+    accessed_at TEXT NOT NULL,    -- when you ingested it
+    description TEXT,             -- user-provided context if no URL
+    raw_path TEXT,                -- path to cached original in ~/.probe/raw/
+    metadata JSON                 -- source-specific extras
+)
+
+-- Chunks with embeddings
+chunks (
+    id TEXT PRIMARY KEY,
+    document_id TEXT REFERENCES documents(id),
+    content TEXT NOT NULL,
+    section TEXT,                 -- 'abstract', 'risk_factors', 'paragraph_3', etc.
+    chunk_index INTEGER,
+    metadata JSON,                -- per-chunk extras (e.g. page_number for PDFs)
+    embedding BLOB                -- 384d float32 via sqlite-vec
+)
+
+-- FTS5 virtual table for keyword search
+chunks_fts (content)             -- mirrors chunks.content
+
+-- Structured extractions (domain-specific output)
+extractions (
+    id TEXT PRIMARY KEY,
+    document_id TEXT REFERENCES documents(id),
+    extraction_type TEXT NOT NULL, -- 'paper', 'financial', 'general'
+    output JSON NOT NULL,          -- domain-specific structured data
+    prompt_version TEXT,
+    created_at TEXT
+)
+
+-- Analysis results (RAG connections)
+analyses (
+    id TEXT PRIMARY KEY,
+    document_id TEXT REFERENCES documents(id),
+    connections JSON NOT NULL,
+    new_information JSON,
+    contradictions JSON,
+    open_questions JSON,
+    rag_context_ids JSON,         -- which chunks were used as context
+    prompt_version TEXT,
+    created_at TEXT
+)
+
+-- Investment theses (versioned first-class objects)
+theses (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    status TEXT DEFAULT 'active', -- 'active', 'closed', 'invalidated'
+    core_claim TEXT NOT NULL,
+    evidence JSON,                -- [{chunk_id, summary, supports_or_contradicts}]
+    risks JSON,
+    last_evaluated TEXT,
+    created_at TEXT,
+    updated_at TEXT
+)</code></pre>
+
+<h2>Ingestion</h2>
+
+<p>Single entry point — Claude parses PDFs and HTML client-side and passes already-extracted markdown plus provenance through <code>ingest()</code>. The server doesn't fetch URLs or parse binary formats.</p>
+
+<pre><code>def ingest(
+    content: str,           # already-parsed markdown (Claude does the parsing)
+    provenance: Provenance, # source_url, title, author, raw_path, accessed_at, metadata
+    source_type: str,       # 'markdown' | 'tweet' | 'web' | 'pdf' | ...
+) -> IngestResult:
+    """Chunk content, attach provenance, return Document + Chunks. No I/O outside DB."""</code></pre>
+
+<p>The <code>source_type</code> discriminator drives per-type chunking:</p>
+
+<table>
+  <tr><th>source_type</th><th>Required provenance</th><th>Chunking behavior</th></tr>
+  <tr><td><code>markdown</code></td><td><code>raw_path</code> (URL not required for local notes)</td><td>split on H2 headers; H1 → document title</td></tr>
+  <tr><td><code>tweet</code></td><td><code>source_url</code> + <code>author</code></td><td>one chunk per call — tweets are atomic</td></tr>
+  <tr><td><code>web</code></td><td><code>source_url</code></td><td>recursive ~400-token split over parsed body</td></tr>
+  <tr><td><code>pdf</code></td><td><code>source_url</code> or <code>raw_path</code></td><td>recursive ~400-token split; caller passes <code>page_number</code> in metadata</td></tr>
+</table>
+
+<p><strong>Invariants:</strong> every chunk carries <code>document_id</code>; <code>Provenance</code> with neither <code>source_url</code> nor <code>raw_path</code> is rejected; <code>accessed_at</code> is auto-set if omitted.</p>
+
+<h2>Extraction Skills</h2>
+
+<h3>PaperExtraction</h3>
+<pre><code>claimed_contribution, method, key_findings, baselines, limitations, builds_on</code></pre>
+
+<h3>FinancialExtraction</h3>
+<pre><code>core_claim, evidence_chain, implied_positions, risks_acknowledged, risks_ignored, key_metrics</code></pre>
+
+<h3>GeneralExtraction (fallback)</h3>
+<pre><code>main_topic, key_points, entities_mentioned, author_stance</code></pre>
+
+<h2>Analysis</h2>
+
+<p>Domain-agnostic RAG layer — one universal step regardless of <code>source_type</code>. Takes extraction output + top-5 similar chunks from the index. Asks Claude: what's new? what does it support or contradict? what connections aren't obvious? what questions should I ask now? Output stored with full provenance chain.</p>
+
+<h2>MCP Server</h2>
+
+<p>Eight tools exposed via stdio transport:</p>
+
+<pre><code>ingest(content, provenance, source_type)      → IngestResult
+# Claude has already parsed the source and passes markdown + provenance fields.
+
+search_personal_knowledge(query, limit=5)     → list[SearchResult]
+# Hybrid: sqlite-vec cosine + FTS5 BM25, reciprocal rank fusion.
+# "personal_knowledge" makes the local-DB boundary obvious.
+
+get_document(doc_id)                          → DocumentDetail
+# Full document with all chunks, extractions, analyses.
+
+extract(doc_id)                               → Extraction
+# Domain-specific extraction (paper / financial / general) by source_type.
+
+analyze(doc_id)                               → Analysis
+# RAG: top-5 similar chunks → Anthropic → connections, contradictions, open Qs.
+
+list_theses(status="active")                  → list[ThesisSummary]
+
+evaluate_thesis(claim_or_id)                  → ThesisEvaluation
+# Accepts a stored thesis_id OR an ad-hoc claim string.
+# RAG-searches personal knowledge, returns support/contradiction with provenance.
+# Lets /thesis &lt;claim&gt; work without first persisting the thesis.
+
+add_note(content, tags=[])                    → Document
+# Ergonomic wrapper over ingest with source_type='markdown'.</code></pre>
+
+<p><strong>MCP config for Claude Code:</strong></p>
+<pre><code>{
+  "mcpServers": {
+    "probe": {
+      "command": "probe",
+      "args": ["serve"],
+      "type": "stdio"
+    }
+  }
+}</code></pre>
+
+<h2>Project Structure</h2>
+
+<pre><code>probe/
+├── pyproject.toml
+├── README.md
+├── CLAUDE.md
+├── src/
+│   └── probe/
+│       ├── __init__.py
+│       ├── cli.py                # typer launcher — probe serve + probe stats only
+│       ├── config.py             # ~/.probe/config.yaml loading
+│       ├── db.py                 # SQLite + sqlite-vec + FTS5 setup
+│       ├── models.py             # Document, Chunk, Provenance, IngestResult, etc.
+│       ├── llm.py                # Anthropic API client wrapper
+│       ├── embeddings.py         # sentence-transformers wrapper → numpy → BLOB
+│       ├── search.py             # hybrid search: vector cosine + FTS5 BM25 + RRF
+│       ├── ingest.py             # single ingest() entry; per-source_type chunking
+│       ├── markdown_split.py     # H1 → title, H2 → sections helper
+│       ├── analysis.py           # RAG analysis layer
+│       ├── thesis.py             # thesis CRUD + evaluate_thesis(claim_or_id)
+│       ├── mcp_server.py         # stdio MCP server — all 8 tools
+│       ├── extraction/
+│       │   ├── __init__.py
+│       │   ├── paper.py
+│       │   ├── financial.py
+│       │   └── general.py
+├── tests/
+│   ├── conftest.py
+│   ├── test_ingest.py            # Day 1: ingest() contract
+│   ├── test_provenance.py        # Day 1: provenance invariants
+│   ├── test_markdown_split.py    # Day 1: header-splitting helper
+│   ├── test_search.py            # Day 2
+│   └── fixtures/
+└── prompts/
+    ├── extract_paper.md
+    ├── extract_financial.md
+    ├── extract_general.md
+    └── analyze.md</code></pre>
+
+<h2>3-Day Build</h2>
+
+<div class="day-card">
+  <h3>Day 1 — Core Engine + Ingestion</h3>
+  <ol>
+    <li><code>pyproject.toml</code>, project structure, <code>config.py</code></li>
+    <li><code>db.py</code> — SQLite schema, sqlite-vec, FTS5 virtual table</li>
+    <li><code>models.py</code> — dataclasses: Document, Chunk, Provenance, IngestResult</li>
+    <li><code>embeddings.py</code> — sentence-transformers wrapper (embed → numpy → BLOB)</li>
+    <li><code>markdown_split.py</code> — H1 → title, H2 → sections</li>
+    <li><code>ingest.py</code> — single <code>ingest(content, provenance, source_type)</code> entry; per-type chunking; provenance invariants</li>
+    <li><code>search.py</code> — sqlite-vec cosine + FTS5 BM25 + RRF merge</li>
+  </ol>
+  <p style="margin-top:0.75rem; font-size:0.85rem; color:var(--text-muted);">Tests (TDD): <code>test_ingest.py</code> — ingest() contract over markdown/tweet/web/pdf; <code>test_provenance.py</code> — invariants; <code>test_markdown_split.py</code> — header splitting</p>
+  <div class="outcome">✓ ingest() persists Documents + Chunks with traceable provenance; embeddings + FTS rows populated; searchable via search.py. No MCP wiring yet — exercised via tests.</div>
+</div>
+
+<div class="day-card">
+  <h3>Day 2 — Extraction + Analysis + Thesis</h3>
+  <ol>
+    <li><code>llm.py</code> — Anthropic API client (structured output via tool_use)</li>
+    <li>Prompt templates in <code>prompts/</code></li>
+    <li><code>extraction/paper.py</code>, <code>extraction/financial.py</code>, <code>extraction/general.py</code></li>
+    <li><code>extract(doc_id)</code> — auto-selects type by <code>source_type</code></li>
+    <li><code>analysis.py</code> — top-5 chunks → Anthropic → connections + storage</li>
+    <li><code>thesis.py</code> — CRUD + <code>evaluate_thesis(claim_or_id)</code> accepting stored ID or ad-hoc claim</li>
+  </ol>
+  <div class="outcome">✓ Ingest a Burry Substack post → extract financial thesis → analyze against index → track as thesis. All via direct function calls — still no MCP wiring.</div>
+</div>
+
+<div class="day-card">
+  <h3>Day 3 — MCP Server + Polish + Stretch</h3>
+  <ol>
+    <li><code>mcp_server.py</code> — stdio MCP with 8 tools</li>
+    <li><code>cli.py</code> — <code>probe serve</code> + <code>probe stats</code></li>
+    <li>Test MCP integration with Claude Code; configure <code>/thesis &lt;claim&gt;</code> slash command</li>
+    <li><span class="tag tag-stretch">stretch</span> <code>edgartools</code> for SEC filings — only source Claude can't reach client-side</li>
+    <li><span class="tag tag-stretch">stretch</span> Rich tables for <code>probe stats</code> output</li>
+    <li><span class="tag tag-stretch">stretch</span> Contextual retrieval (prepend chunk context before embedding)</li>
+  </ol>
+  <div class="outcome">✓ Claude Code calls Probe's MCP tools to ingest, search, and reason over your research index. /thesis wraps evaluate_thesis for one-shot reasoning.</div>
+</div>
+
+<h2>What NOT to Build</h2>
+
+<div class="not-list">
+  <span>No</span> web UI — MCP server only; Claude Code is the UI.<br>
+  <span>No</span> human-facing CLI for ingest/search/extract/analyze — those are MCP tools, not commands.<br>
+  <span>No</span> server-side URL fetching or HTML/PDF parsing — Claude parses client-side.<br>
+  <span>No</span> Postgres/Chroma/Pinecone — sqlite-vec only.<br>
+  <span>No</span> async ingestion pipeline — synchronous is fine for personal use.<br>
+  <span>No</span> automatic re-indexing on prompt changes — manual <code>extract</code> re-run via MCP.<br>
+  <span>No</span> multi-user auth — single user, local files.
+</div>
+
+<h2>Dependencies</h2>
+
+<pre><code>[project]
+name = "probe"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.12",                 # probe serve / probe stats only
+    "rich>=13",
+    "anthropic>=0.42",
+    "mcp>=1.0",                    # stdio MCP server
+    "sentence-transformers>=3",
+    "sqlite-vec>=0.1",
+    "numpy>=1.26",
+    "pyyaml>=6",
+    "pydantic>=2",
+]
+
+[project.scripts]
+probe = "probe.cli:app"</code></pre>
+
+<p style="color: var(--text-muted); font-size: 0.85rem;">Dropped from original list: <code>httpx</code>, <code>beautifulsoup4</code>, <code>pymupdf4llm</code> — the server doesn't fetch URLs or parse binary formats.</p>
+
+</body>
+</html>
