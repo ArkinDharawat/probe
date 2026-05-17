@@ -8,9 +8,16 @@ from probe.markdown_split import split_markdown
 from probe.data_classes import Chunk, Document, IngestResult, Provenance
 
 _MAX_CHARS = 1600
+_KNOWN_SOURCE_TYPES = {"markdown", "tweet", "web", "pdf"}
 
 
 def _validate_provenance(provenance: Provenance, source_type: str) -> None:
+    if source_type not in _KNOWN_SOURCE_TYPES:
+        raise ValueError(
+            f"Unknown source_type={source_type!r}; "
+            f"must be one of {sorted(_KNOWN_SOURCE_TYPES)}"
+        )
+
     if provenance.source_url is None and provenance.raw_path is None:
         raise ValueError("Provenance must include source_url or raw_path")
 
@@ -23,6 +30,20 @@ def _validate_provenance(provenance: Provenance, source_type: str) -> None:
     if source_type == "web":
         if provenance.source_url is None:
             raise ValueError("web ingestion requires source_url")
+
+
+def _extract_markdown_intro(content: str) -> str:
+    """Return text between the H1 (or start of content) and the first H2.
+    split_markdown intentionally only emits H2-keyed sections, so anything
+    preceding the first ## would be silently dropped without this helper."""
+    intro_lines: list[str] = []
+    for line in content.splitlines():
+        if line.startswith("## "):
+            break
+        if line.startswith("# ") and not line.startswith("## "):
+            continue
+        intro_lines.append(line)
+    return "\n".join(intro_lines).strip()
 
 
 def _accessed_at(provenance: Provenance) -> str:
@@ -114,9 +135,12 @@ def ingest(content: str, provenance: Provenance, source_type: str) -> IngestResu
         h1_title, sections = split_markdown(content)
         if h1_title is not None:
             title = h1_title
+        intro = _extract_markdown_intro(content)
+        if intro:
+            raw_sections.append((None, intro))
         if sections:
-            raw_sections = [(s.header, s.body) for s in sections]
-        else:
+            raw_sections.extend((s.header, s.body) for s in sections)
+        elif not intro:
             raw_sections = [(None, content)]
 
     else:
@@ -136,27 +160,27 @@ def ingest(content: str, provenance: Provenance, source_type: str) -> IngestResu
         metadata=provenance.metadata or {},
     )
 
-    chunk_metadata = provenance.metadata if source_type == "pdf" else {}
+    chunk_metadata = (provenance.metadata or {}) if source_type == "pdf" else {}
 
-    chunks: list[Chunk] = []
-    for idx, (section, text) in enumerate(raw_sections):
-        stripped = text.strip()
-        if not stripped:
-            continue
-        chunks.append(
-            Chunk(
-                id=str(uuid.uuid4()),
-                document_id=doc_id,
-                content=stripped,
-                section=section,
-                chunk_index=idx,
-                metadata=dict(chunk_metadata),
-                embedding=None,
-            )
+    filtered = [(section, text.strip()) for section, text in raw_sections if text.strip()]
+
+    if not filtered:
+        raise ValueError(
+            f"Ingestion produced zero chunks for source_type={source_type!r}; "
+            "content may be empty or whitespace-only"
         )
 
-    # Re-index after filtering empty chunks so indices are always sequential
-    for i, chunk in enumerate(chunks):
-        chunk.chunk_index = i
+    chunks = [
+        Chunk(
+            id=str(uuid.uuid4()),
+            document_id=doc_id,
+            content=text,
+            section=section,
+            chunk_index=idx,
+            metadata=dict(chunk_metadata),
+            embedding=None,
+        )
+        for idx, (section, text) in enumerate(filtered)
+    ]
 
     return IngestResult(document=document, chunks=chunks)
