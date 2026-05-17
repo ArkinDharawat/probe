@@ -1,7 +1,7 @@
 import uuid
 
 from probe.ingest import ingest
-from probe.models import Provenance
+from probe.data_classes import Provenance
 
 
 def test_ingest_markdown_extracts_title_from_h1(sample_md_text, sample_md_path):

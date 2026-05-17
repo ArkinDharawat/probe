@@ -46,7 +46,7 @@ Data flows one-way: **Skill → DB → Extraction → Analysis → Thesis**
 src/probe/
 ├── cli.py           # typer app; thin layer, delegates to skills/modules
 ├── db.py            # schema creation, sqlite-vec setup, FTS5 virtual table
-├── models.py        # dataclasses: Document, Chunk, IngestResult, etc.
+├── data_classes.py  # dataclasses: Document, Chunk, IngestResult, etc.
 ├── embeddings.py    # sentence-transformers wrapper → numpy → BLOB for sqlite-vec
 ├── search.py        # hybrid search: vector cosine + FTS5 BM25, merged via RRF
 ├── llm.py           # Anthropic client wrapper; structured output via tool_use
@@ -77,6 +77,12 @@ src/probe/
 **Config and data paths** — `~/.probe/config.yaml` (API keys, model, db path), `~/.probe/probe.db` (everything), `~/.probe/raw/` (cached originals). `config.py` owns all path resolution.
 
 **LLM calls use prompt files** — prompts live in `prompts/*.md`, not hardcoded in Python. `extraction/*.py` modules load the relevant prompt file and call `llm.py`. Mock `llm.py` in tests; do not hit the real API.
+
+## TDD Rules
+
+This project uses test-driven development. Tests are written first and define the contract.
+
+**Never modify test logic when implementing the corresponding code.** If a test is failing, fix the implementation — not the test. The only permitted edits to test files are mechanical renames (e.g. updating an import path when a module is renamed) that do not change what the test asserts.
 
 ## Out of Scope (do not add)
 

@@ -298,7 +298,7 @@ probe/
 │       ├── cli.py                # typer CLI — `probe serve` + `probe stats` only
 │       ├── config.py             # ~/.probe/config.yaml loading
 │       ├── db.py                 # SQLite + sqlite-vec + FTS5 setup
-│       ├── models.py             # dataclasses: Document, Chunk, Provenance, IngestResult, etc.
+│       ├── data_classes.py       # dataclasses: Document, Chunk, Provenance, IngestResult, etc.
 │       ├── llm.py                # Anthropic API client wrapper
 │       ├── embeddings.py         # sentence-transformers local embedding
 │       ├── search.py             # hybrid search (vector + FTS5 + RRF)
@@ -392,7 +392,7 @@ Day 1 tests live in test_ingest.py / test_provenance.py / test_markdown_split.py
 ### Day 1: Core Engine + Ingestion (get data in)
 1. `pyproject.toml`, project structure, `config.py`
 2. `db.py` — SQLite schema creation, sqlite-vec setup, FTS5 virtual table
-3. `models.py` — dataclasses for `Document`, `Chunk`, `Provenance`, `IngestResult`
+3. `data_classes.py` — dataclasses for `Document`, `Chunk`, `Provenance`, `IngestResult`
 4. `embeddings.py` — sentence-transformers wrapper (embed text → numpy → blob)
 5. `markdown_split.py` — H1 → title, H2 → sections helper
 6. `ingest.py` — single `ingest(content, provenance, source_type)` entry; per-`source_type` chunking; provenance invariants

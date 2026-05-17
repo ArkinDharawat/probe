@@ -1,7 +1,7 @@
 import pytest
 
 from probe.ingest import ingest
-from probe.models import Provenance
+from probe.data_classes import Provenance
 
 
 def test_rejects_content_with_no_traceable_source():
