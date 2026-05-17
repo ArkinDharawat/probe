@@ -395,7 +395,7 @@ add_note(content, tags=[])                    → Document
 │       ├── cli.py                # typer launcher — probe serve + probe stats only
 │       ├── config.py             # ~/.probe/config.yaml loading
 │       ├── db.py                 # SQLite + sqlite-vec + FTS5 setup
-│       ├── models.py             # Document, Chunk, Provenance, IngestResult, etc.
+│       ├── data_classes.py       # Document, Chunk, Provenance, IngestResult, etc.
 │       ├── llm.py                # Anthropic API client wrapper
 │       ├── embeddings.py         # sentence-transformers wrapper → numpy → BLOB
 │       ├── search.py             # hybrid search: vector cosine + FTS5 BM25 + RRF
@@ -429,7 +429,7 @@ add_note(content, tags=[])                    → Document
   <ol>
     <li><code>pyproject.toml</code>, project structure, <code>config.py</code></li>
     <li><code>db.py</code> — SQLite schema, sqlite-vec, FTS5 virtual table</li>
-    <li><code>models.py</code> — dataclasses: Document, Chunk, Provenance, IngestResult</li>
+    <li><code>data_classes.py</code> — dataclasses: Document, Chunk, Provenance, IngestResult</li>
     <li><code>embeddings.py</code> — sentence-transformers wrapper (embed → numpy → BLOB)</li>
     <li><code>markdown_split.py</code> — H1 → title, H2 → sections</li>
     <li><code>ingest.py</code> — single <code>ingest(content, provenance, source_type)</code> entry; per-type chunking; provenance invariants</li>
