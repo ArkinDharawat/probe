@@ -140,7 +140,7 @@ The `source_type` discriminator drives per-type behavior:
 - `Provenance` with neither `source_url` nor `raw_path` is rejected (no untraceable content)
 - `accessed_at` is auto-set if the caller omits it
 
-### Extraction (Day 2)
+### Extraction (Day 3)
 
 Domain-specific structured extraction selected by `source_type`. One Python module per domain, each loading its prompt from `prompts/*.md`.
 
@@ -178,7 +178,7 @@ output_schema = {
 }
 ```
 
-### Analysis (Day 2)
+### Analysis (Day 3)
 
 Domain-agnostic RAG layer — one universal step regardless of `source_type`.
 
@@ -405,27 +405,34 @@ Day 1 tests live in test_ingest.py / test_provenance.py / test_markdown_split.py
 
 **End of Day 1:** the `ingest()` function persists Documents + Chunks with traceable provenance, embeddings + FTS rows are populated, and you can `search.py` across them. No MCP wiring yet — exercised via tests.
 
-### Day 2: Extraction + Analysis + Thesis (make it smart)
+### Day 2: MCP Server + Real Payload Capture (de-risk the ingest contract)
+
+The point of doing MCP first: Claude (the client) is the one parsing PDFs, Substack HTML, arXiv pages, tweets. We don't actually know the exact shape of what Claude hands `ingest()` until we wire MCP up and watch. Day 2 captures that ground truth before Day 3 builds extraction prompts and analysis on top of it.
+
+1. `mcp_server.py` — minimal stdio MCP server exposing only what Day 1 already built: `ingest`, `search_personal_knowledge`, `get_document`
+2. `cli.py` — `probe serve` launcher
+3. Wire Probe into Claude Desktop (and/or the Anthropic API directly); ingest a Burry Substack post, an arXiv PDF, and a tweet end-to-end through Claude
+4. Capture each real `ingest()` payload (content body + provenance dict) as a fixture under `tests/fixtures/` — these become the ground truth for Day 3 extraction prompts and tests
+5. Iterate on `ingest()` validation, per-`source_type` required fields, and the `source_type` vocabulary based on what Claude actually sends (not what we imagined)
+
+**End of Day 2:** Probe runs as an MCP server; Claude Desktop can ingest, search, and retrieve documents end-to-end. You have captured real payloads from a Substack post, an arXiv paper, and a tweet — no more guessing what Claude's parsing produces.
+
+### Day 3: Extraction + Analysis + Thesis + Polish (built on real fixtures)
 1. `llm.py` — Anthropic API client (structured output via tool_use or JSON mode)
-2. `prompts/extract_paper.md`, `prompts/extract_financial.md`, `prompts/extract_general.md`
+2. `prompts/extract_paper.md`, `prompts/extract_financial.md`, `prompts/extract_general.md` — written against the Day 2 captured payloads
 3. `extraction/paper.py`, `extraction/financial.py`, `extraction/general.py`
 4. `extract(doc_id)` entry — auto-selects extraction type by `source_type`
 5. `prompts/analyze.md` — the RAG analysis prompt
 6. `analysis.py` — fetch top-5 similar chunks, build context, call Anthropic, store result
 7. `thesis.py` — CRUD for theses; `evaluate_thesis(claim_or_id)` accepting either a stored thesis ID or an ad-hoc claim string
+8. Extend `mcp_server.py` with `extract`, `analyze`, `list_theses`, `evaluate_thesis`, `add_note`
+9. Configure a `/thesis <claim>` slash command in Claude Code that calls `evaluate_thesis`
+10. `cli.py` — `probe stats` command for out-of-band debugging
+11. **Stretch:** `edgartools` for SEC filings — server-side because Claude can't easily reach EDGAR programmatically
+12. **Stretch:** `rich` tables for prettier `probe stats` output
+13. **Stretch:** Contextual retrieval (prepend chunk context before embedding, Anthropic pattern)
 
-**End of Day 2:** you can ingest a Burry Substack post, extract the financial thesis, run analysis against your existing index, and track it as a thesis. All via direct function calls (still no MCP wiring).
-
-### Day 3: MCP Server + Polish + Stretch
-1. `mcp_server.py` — stdio MCP server exposing `ingest`, `search_personal_knowledge`, `get_document`, `extract`, `analyze`, `list_theses`, `evaluate_thesis`, `add_note`
-2. `cli.py` — `probe serve` command (launcher only)
-3. Test MCP integration with Claude Code; configure a `/thesis <claim>` slash command that calls `evaluate_thesis`
-4. `cli.py` — `probe stats` command for out-of-band debugging
-5. **Stretch:** `edgartools` for SEC filings — server-side because Claude can't easily reach EDGAR programmatically
-6. **Stretch:** `rich` tables for prettier `probe stats` output
-7. **Stretch:** Contextual retrieval (prepend chunk context before embedding, Anthropic pattern)
-
-**End of Day 3:** Claude Code calls Probe's MCP tools to ingest, search, and reason over your research index. The slash-command UX (`/thesis ...`) wraps the heavier MCP tools for one-shot reasoning.
+**End of Day 3:** Claude Code calls Probe's MCP tools to ingest, search, extract, and reason over your research index. The slash-command UX (`/thesis ...`) wraps the heavier MCP tools for one-shot reasoning.
 
 ---
 
