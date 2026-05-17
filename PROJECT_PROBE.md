@@ -10,25 +10,32 @@ A CLI tool that ingests diverse research sources (papers, SEC filings, Substack 
 
 ## Architecture (keep it simple)
 
+Probe is an **MCP server first**. The user's local Claude is the only client. Claude parses PDFs and HTML natively and hands the server already-extracted markdown plus provenance. The server doesn't fetch URLs or parse binary formats.
+
 ```
-CLI (typer)
+Claude Code (MCP client)
+  │ stdio
+  ▼
+probe serve (MCP server)
   │
-  ├─ probe ingest <url_or_file>     → Ingestion Skill → Chunks + Provenance → SQLite
-  ├─ probe ingest --type tweet       → prompts for text + URL
-  ├─ probe extract <doc_id>          → Extraction Skill → Structured output → SQLite
-  ├─ probe analyze <doc_id>          → RAG context + Anthropic API → Connections → SQLite
-  ├─ probe search "query"            → sqlite-vec similarity + FTS5 keyword → Results
-  ├─ probe thesis list|show|create   → Thesis CRUD
-  ├─ probe serve                     → MCP server (localhost)
-  └─ probe stats                     → counts, last import, db size
+  ├─ ingest(content, provenance, source_type)   → Chunks + Provenance → SQLite
+  ├─ search_personal_knowledge(query, limit)    → sqlite-vec + FTS5 + RRF
+  ├─ get_document(doc_id)                       → full doc + extractions + analyses
+  ├─ extract(doc_id)                            → Anthropic API → structured output
+  ├─ analyze(doc_id)                            → RAG context + Anthropic API → connections
+  ├─ evaluate_thesis(claim_or_id)               → RAG → support/contradict verdict
+  ├─ list_theses(status)                        → tracked theses
+  └─ add_note(content, tags)                    → ergonomic ingest wrapper
 ```
+
+The CLI surface collapses to a launcher: `probe serve` (start the MCP server) and optional `probe stats` (out-of-band DB debugging from the terminal). Everything else lives behind MCP tools.
 
 **Key reuse decisions (from research):**
 - `sqlite-vec` for vectors, `FTS5` for keyword search, plain `sqlite3` for everything else — one file, zero ops
 - Anthropic API (claude-sonnet-4-20250514) for extraction and analysis — you already pay for Pro
 - `sentence-transformers` (all-MiniLM-L6-v2) for local embeddings — fast, free, 384d, good enough to start
-- `httpx` for fetching URLs, `pymupdf4llm` for PDFs, `beautifulsoup4` for HTML
-- `edgartools` for SEC filings if you want EDGAR support (add in Day 3)
+- No `httpx` / `beautifulsoup4` / `pymupdf4llm` server-side — Claude parses client-side and passes the result through `ingest`
+- `edgartools` for SEC filings if you want EDGAR support (add in Day 3) — only data source Claude can't easily reach itself
 
 ---
 
@@ -56,19 +63,20 @@ chunks (
     content TEXT NOT NULL,
     section TEXT,                 -- 'abstract', 'risk_factors', 'paragraph_3', etc.
     chunk_index INTEGER,
+    metadata JSON,                -- per-chunk extras (e.g. page_number for PDFs)
     embedding BLOB               -- 384d float32 via sqlite-vec
 )
 
 -- FTS5 virtual table for keyword search
 chunks_fts (content) -- mirrors chunks.content
 
--- Structured extractions (skill-specific output)
+-- Structured extractions (domain-specific output)
 extractions (
     id TEXT PRIMARY KEY,
     document_id TEXT REFERENCES documents(id),
-    skill_type TEXT NOT NULL,     -- 'paper', 'financial', 'general'
-    output JSON NOT NULL,         -- skill-specific structured data
-    prompt_version TEXT,          -- which prompt produced this
+    extraction_type TEXT NOT NULL, -- 'paper', 'financial', 'general'
+    output JSON NOT NULL,          -- domain-specific structured data
+    prompt_version TEXT,           -- which prompt produced this
     created_at TEXT
 )
 
@@ -101,64 +109,40 @@ theses (
 
 ---
 
-## Skills (pluggable modules)
+## Ingestion (single entry point)
 
-Each skill is a Python module with three functions. The core engine calls them.
+Original spec had four pluggable `Skill` classes (`WebSkill`, `PDFSkill`, `TweetSkill`, `MarkdownSkill`). With Claude as the MCP client, this collapses: Claude parses PDFs and HTML and hands the server already-extracted markdown plus provenance. The server exposes one entry point.
 
 ```python
-# skills/base.py
-class Skill(ABC):
-    name: str
-    source_types: list[str]
-
-    @abstractmethod
-    def can_handle(self, source_ref: str, source_type: str | None) -> bool:
-        """Can this skill process this source?"""
-
-    @abstractmethod
-    def ingest(self, source_ref: str) -> IngestResult:
-        """Fetch, parse, chunk. Returns chunks + provenance metadata."""
-
-    @abstractmethod
-    def extract(self, chunks: list[Chunk], llm: LLMClient) -> dict:
-        """Domain-specific structured extraction via Anthropic API."""
+def ingest(
+    content: str,           # already-parsed markdown (Claude does the parsing)
+    provenance: Provenance, # source_url, title, author, raw_path, accessed_at, metadata
+    source_type: str,       # 'markdown' | 'tweet' | 'web' | 'pdf' | ...
+) -> IngestResult:
+    """Chunk content, attach provenance, return Document + Chunks. No I/O outside DB."""
 ```
 
-### Ingestion Skills (Day 1)
+The `source_type` discriminator drives per-type behavior:
 
-**WebSkill** — handles Substack, blog posts, any web page:
-```
-Input:  URL
-Steps:  httpx.get → BeautifulSoup → clean HTML → chunk at ~400 tokens
-Output: chunks with section headers as metadata
-Provenance: URL, title, author (from meta tags), accessed_at
-```
+| `source_type` | Required provenance | Chunking behavior |
+|---|---|---|
+| `markdown` | `raw_path` (URL not required for local notes) | split on H2 headers; H1 → document title |
+| `tweet` | `source_url` + `author` | one chunk per call — tweets are atomic |
+| `web` | `source_url` | recursive ~400-token split over the parsed body |
+| `pdf` | `source_url` or `raw_path` | recursive ~400-token split; caller passes `page_number` in `metadata` so chunks inherit it |
 
-**PDFSkill** — handles arXiv papers, earnings transcripts, reports:
-```
-Input:  file path or URL ending in .pdf
-Steps:  pymupdf4llm → markdown text → chunk with page numbers
-Output: chunks with page_number and section as metadata
-Provenance: URL or path, title (from first page), accessed_at
-```
+**Helpers (server-side):**
+- `markdown_split(text) → (title, sections)` — pulls H1 as title and splits on H2 for the markdown path
+- Generic recursive ~400-token chunker for non-markdown content
 
-**TweetSkill** — handles pasted tweet text:
-```
-Input:  --type tweet flag triggers interactive prompt
-Steps:  CLI asks for: tweet text, URL, author
-Output: single chunk (tweets are atomic)
-Provenance: URL, author, accessed_at (published_at if parseable from URL)
-```
+**Invariants:**
+- Every chunk carries `document_id` linking back to its `Document`
+- `Provenance` with neither `source_url` nor `raw_path` is rejected (no untraceable content)
+- `accessed_at` is auto-set if the caller omits it
 
-**MarkdownSkill** — handles your own notes, thesis docs:
-```
-Input:  .md file path
-Steps:  read → split on headers → chunk
-Output: chunks with header hierarchy as section metadata
-Provenance: file path, accessed_at
-```
+### Extraction (Day 2)
 
-### Extraction Skills (Day 2)
+Domain-specific structured extraction selected by `source_type`. One Python module per domain, each loading its prompt from `prompts/*.md`.
 
 **PaperExtraction:**
 ```python
@@ -194,9 +178,9 @@ output_schema = {
 }
 ```
 
-### Analysis Skill (Day 2)
+### Analysis (Day 2)
 
-This is the domain-agnostic RAG layer. Not a pluggable skill per source type — one universal analysis step.
+Domain-agnostic RAG layer — one universal step regardless of `source_type`.
 
 ```
 Input:  extraction output + RAG context (top-5 similar chunks from index)
@@ -242,27 +226,49 @@ If a required field can't be auto-extracted, the CLI prompts for it. Never store
 
 ## MCP Server
 
-`probe serve` starts a local MCP server on `localhost:7433`.
+`probe serve` starts a local MCP server over stdio.
 
 **Tools exposed:**
 
 ```python
-search_knowledge(query: str, limit: int = 5) -> list[SearchResult]
-# Hybrid: sqlite-vec cosine + FTS5 keyword, reciprocal rank fusion
-# Returns chunks with provenance and document context
+ingest(content: str, provenance: Provenance, source_type: str) -> IngestResult
+# Single ingest entry. Claude has already parsed the source (PDF, HTML, etc.)
+# and passes markdown + provenance fields.
+
+search_personal_knowledge(query: str, limit: int = 5) -> list[SearchResult]
+# Hybrid: sqlite-vec cosine + FTS5 keyword, reciprocal rank fusion.
+# Returns chunks with provenance and document context.
+# Renamed from search_knowledge to make the "local DB, not Claude's training data"
+# boundary obvious.
 
 get_document(doc_id: str) -> DocumentDetail
-# Full document with all chunks, extractions, analyses
+# Full document with all chunks, extractions, analyses.
+
+extract(doc_id: str) -> Extraction
+# Run domain-specific structured extraction (paper / financial / general)
+# selected by source_type. Stores in extractions table.
+
+analyze(doc_id: str) -> Analysis
+# RAG analysis: top-5 similar chunks → Anthropic → connections,
+# new info, contradictions, open questions.
 
 list_theses(status: str = "active") -> list[ThesisSummary]
-# Your tracked investment theses
+# Your tracked investment theses.
 
-evaluate_thesis(thesis_id: str, new_info: str) -> ThesisEvaluation
-# Given new information, does it support or contradict the thesis?
+evaluate_thesis(claim_or_id: str) -> ThesisEvaluation
+# Generalized from the original evaluate_thesis(thesis_id, new_info):
+# accepts either a stored thesis_id OR an ad-hoc claim string,
+# RAG-searches personal knowledge, and returns support / contradiction
+# with provenance. Lets a Claude Code slash command like `/thesis <claim>`
+# invoke it without first persisting the thesis.
 
 add_note(content: str, tags: list[str] = []) -> Document
-# Quick capture — stores as markdown type, extracts, analyzes
+# Ergonomic wrapper over ingest with source_type='markdown'.
 ```
+
+**Claude Code slash command pattern (optional, client-side):**
+
+Slash commands like `/thesis Palantir drops to $10 a share` wrap a call to `evaluate_thesis(claim)`. The MCP server exposes the tool; the slash command lives in Claude Code config — different layers, easy to confuse with the old "Skill" terminology.
 
 **MCP config for Claude Code:**
 ```json
@@ -289,32 +295,29 @@ probe/
 ├── src/
 │   └── probe/
 │       ├── __init__.py
-│       ├── cli.py                # typer CLI
+│       ├── cli.py                # typer CLI — `probe serve` + `probe stats` only
 │       ├── config.py             # ~/.probe/config.yaml loading
 │       ├── db.py                 # SQLite + sqlite-vec + FTS5 setup
-│       ├── models.py             # dataclasses: Document, Chunk, Extraction, etc.
+│       ├── models.py             # dataclasses: Document, Chunk, Provenance, IngestResult, etc.
 │       ├── llm.py                # Anthropic API client wrapper
 │       ├── embeddings.py         # sentence-transformers local embedding
 │       ├── search.py             # hybrid search (vector + FTS5 + RRF)
-│       ├── skills/
-│       │   ├── __init__.py
-│       │   ├── base.py           # Skill ABC
-│       │   ├── web.py            # Substack, blogs, any URL
-│       │   ├── pdf.py            # papers, transcripts, reports
-│       │   ├── tweet.py          # pasted tweets
-│       │   ├── markdown.py       # local .md files
-│       │   └── edgar.py          # SEC filings (Day 3 stretch)
+│       ├── ingest.py             # single ingest entry — chunks content + persists with provenance
+│       ├── markdown_split.py     # H1 → title, H2 → sections; helper for source_type='markdown'
 │       ├── extraction/
 │       │   ├── __init__.py
 │       │   ├── paper.py          # paper-specific extraction prompt
 │       │   ├── financial.py      # financial-specific extraction prompt
 │       │   └── general.py        # fallback extraction
 │       ├── analysis.py           # RAG analysis layer
-│       ├── thesis.py             # thesis CRUD + evaluation
-│       └── mcp_server.py         # MCP stdio server
+│       ├── thesis.py             # thesis CRUD + evaluation (claim_or_id)
+│       └── mcp_server.py         # MCP stdio server — exposes ingest/search/extract/analyze/etc.
 ├── tests/
-│   ├── test_ingest.py
-│   ├── test_search.py
+│   ├── conftest.py               # fixture loaders for tests/fixtures/
+│   ├── test_ingest.py            # Day 1: ingest() contract over markdown/tweet/web/pdf payloads
+│   ├── test_provenance.py        # Day 1: invariant + per-source-type required fields
+│   ├── test_markdown_split.py    # Day 1: header-splitting helper
+│   ├── test_search.py            # Day 2
 │   └── fixtures/
 └── prompts/                      # extraction/analysis prompt templates
     ├── extract_paper.md
@@ -323,41 +326,54 @@ probe/
     └── analyze.md
 ```
 
+Note: the old `src/probe/skills/` directory (per-source `Skill` subclasses) is gone — `ingest.py` + `markdown_split.py` + `source_type` discriminator replace it. The empty `src/probe/skills/` shell in the current scaffold can be removed when Day 1 implementation lands.
+
 ---
 
 ## CLAUDE.md (for Claude Code sessions)
 
 ```markdown
-# Probe — Personal Research CLI
+# Probe — Personal Research MCP Server
 
 ## What is this
-A CLI tool for ingesting research documents (papers, filings, Substack,
-tweets), extracting structured information, and connecting new info to
-existing knowledge via RAG. Exposes an MCP server.
+An MCP server that ingests research documents (papers, filings, Substack,
+tweets, notes), extracts structured information, and connects new info to
+existing knowledge via RAG. Claude (the MCP client) does the parsing of
+PDFs and HTML; the server stores, embeds, searches, and reasons.
 
 ## Tech stack
-- Python 3.12, typer for CLI, sqlite3 + sqlite-vec + FTS5 for storage
+- Python 3.12, typer for the launcher CLI, sqlite3 + sqlite-vec + FTS5 for storage
 - Anthropic API (claude-sonnet-4-20250514) for extraction/analysis
 - sentence-transformers (all-MiniLM-L6-v2) for local embeddings
-- httpx for fetching, pymupdf4llm for PDFs, beautifulsoup4 for HTML
+- No server-side URL fetching, HTML, or PDF parsing — client does that
 
 ## Key patterns
-- Skills are pluggable: each source type has an ingestion skill in src/probe/skills/
-- Extraction is domain-specific: prompts in prompts/ directory, output schemas in src/probe/extraction/
+- Single ingest entry: `ingest(content, provenance, source_type)`; `source_type`
+  is a string discriminator (`markdown` / `tweet` / `web` / `pdf` / ...)
+- Markdown splitting (H1 → title, H2 → sections) lives in `markdown_split.py`
+- Extraction is domain-specific: prompts in prompts/, output schemas in src/probe/extraction/
 - Analysis is domain-agnostic: RAG over existing index, prompt in prompts/analyze.md
-- Every chunk has full provenance (source URL, author, date, section)
+- Every chunk has full provenance (source URL, author, date, section);
+  `Provenance` with no `source_url` and no `raw_path` is rejected
 - Hybrid search: sqlite-vec cosine similarity + FTS5 BM25 + reciprocal rank fusion
 - MCP server uses stdio transport for Claude Code integration
 
-## Commands
-- `probe ingest <url_or_file>` — auto-detects source type, ingests + embeds
-- `probe ingest --type tweet` — interactive tweet capture
-- `probe extract <doc_id>` — runs domain-specific extraction
-- `probe analyze <doc_id>` — RAG analysis against existing index
-- `probe search "query"` — hybrid search
-- `probe thesis create|list|show|evaluate` — thesis management
-- `probe serve` — start MCP server
-- `probe stats` — database stats
+## CLI
+- `probe serve` — start the MCP server (the primary entry point)
+- `probe stats` — out-of-band DB stats (optional, terminal-only debug)
+
+Everything else (ingest, search, extract, analyze, thesis) is an MCP tool,
+not a CLI command. Don't add `probe ingest` / `probe search` etc. back.
+
+## MCP tools
+- `ingest(content, provenance, source_type)` — chunk + persist
+- `search_personal_knowledge(query, limit)` — hybrid search over the local DB
+- `get_document(doc_id)` — full doc + extractions + analyses
+- `extract(doc_id)` — structured extraction (paper/financial/general)
+- `analyze(doc_id)` — RAG analysis (connections, contradictions, open Qs)
+- `evaluate_thesis(claim_or_id)` — accepts a stored thesis ID OR an ad-hoc claim
+- `list_theses(status)`
+- `add_note(content, tags)` — ergonomic wrapper over ingest
 
 ## Config
 ~/.probe/config.yaml — API keys, embedding model, db path
@@ -366,6 +382,7 @@ existing knowledge via RAG. Exposes an MCP server.
 
 ## Testing
 pytest. Fixtures in tests/fixtures/. Mock Anthropic API calls in tests.
+Day 1 tests live in test_ingest.py / test_provenance.py / test_markdown_split.py.
 ```
 
 ---
@@ -375,43 +392,40 @@ pytest. Fixtures in tests/fixtures/. Mock Anthropic API calls in tests.
 ### Day 1: Core Engine + Ingestion (get data in)
 1. `pyproject.toml`, project structure, `config.py`
 2. `db.py` — SQLite schema creation, sqlite-vec setup, FTS5 virtual table
-3. `models.py` — dataclasses for Document, Chunk, IngestResult
+3. `models.py` — dataclasses for `Document`, `Chunk`, `Provenance`, `IngestResult`
 4. `embeddings.py` — sentence-transformers wrapper (embed text → numpy → blob)
-5. `skills/base.py` — Skill ABC
-6. `skills/web.py` — fetch URL, parse HTML, chunk, extract provenance
-7. `skills/pdf.py` — pymupdf4llm, chunk with page numbers
-8. `skills/tweet.py` — interactive CLI prompt for text + URL + author
-9. `skills/markdown.py` — read file, split on headers
-10. `cli.py` — `probe ingest` command with auto-detection
-11. `search.py` — basic vector search (sqlite-vec cosine), FTS5 keyword, RRF merge
-12. `cli.py` — `probe search` command
+5. `markdown_split.py` — H1 → title, H2 → sections helper
+6. `ingest.py` — single `ingest(content, provenance, source_type)` entry; per-`source_type` chunking; provenance invariants
+7. `search.py` — basic vector search (sqlite-vec cosine), FTS5 keyword, RRF merge
 
-**End of Day 1:** you can ingest a Substack post, a PDF, a tweet, and a markdown file, then search across all of them.
+**Day 1 tests (TDD — already on `claude/write-day1-tests-bqThr`):**
+- `tests/test_ingest.py` — `ingest()` contract over markdown / tweet / web / pdf payloads, chunk sizing, document linkage
+- `tests/test_provenance.py` — invariant + per-source-type required fields
+- `tests/test_markdown_split.py` — header splitting helper
+
+**End of Day 1:** the `ingest()` function persists Documents + Chunks with traceable provenance, embeddings + FTS rows are populated, and you can `search.py` across them. No MCP wiring yet — exercised via tests.
 
 ### Day 2: Extraction + Analysis + Thesis (make it smart)
 1. `llm.py` — Anthropic API client (structured output via tool_use or JSON mode)
 2. `prompts/extract_paper.md`, `prompts/extract_financial.md`, `prompts/extract_general.md`
 3. `extraction/paper.py`, `extraction/financial.py`, `extraction/general.py`
-4. `cli.py` — `probe extract` command (auto-selects extraction type by source_type)
+4. `extract(doc_id)` entry — auto-selects extraction type by `source_type`
 5. `prompts/analyze.md` — the RAG analysis prompt
 6. `analysis.py` — fetch top-5 similar chunks, build context, call Anthropic, store result
-7. `cli.py` — `probe analyze` command
-8. `thesis.py` — CRUD for theses, `evaluate_thesis` (takes thesis + new doc, asks Claude if it supports/contradicts)
-9. `cli.py` — `probe thesis create|list|show|evaluate` commands
+7. `thesis.py` — CRUD for theses; `evaluate_thesis(claim_or_id)` accepting either a stored thesis ID or an ad-hoc claim string
 
-**End of Day 2:** you can ingest a Burry Substack post, extract the financial thesis, run analysis against your existing index, and track it as a thesis.
+**End of Day 2:** you can ingest a Burry Substack post, extract the financial thesis, run analysis against your existing index, and track it as a thesis. All via direct function calls (still no MCP wiring).
 
 ### Day 3: MCP Server + Polish + Stretch
-1. `mcp_server.py` — stdio MCP server with `search_knowledge`, `get_document`, `list_theses`, `evaluate_thesis`, `add_note`
-2. `cli.py` — `probe serve` command
-3. Test MCP integration with Claude Code
-4. `cli.py` — `probe stats` command
-5. `probe ingest` enhancement: auto-chain ingest → extract → analyze in one command (`probe ingest --full`)
-6. **Stretch:** `skills/edgar.py` using `edgartools` for 10-K/10-Q ingestion
-7. **Stretch:** `rich` tables for prettier CLI output
-8. **Stretch:** Contextual retrieval (prepend chunk context before embedding, Anthropic pattern)
+1. `mcp_server.py` — stdio MCP server exposing `ingest`, `search_personal_knowledge`, `get_document`, `extract`, `analyze`, `list_theses`, `evaluate_thesis`, `add_note`
+2. `cli.py` — `probe serve` command (launcher only)
+3. Test MCP integration with Claude Code; configure a `/thesis <claim>` slash command that calls `evaluate_thesis`
+4. `cli.py` — `probe stats` command for out-of-band debugging
+5. **Stretch:** `edgartools` for SEC filings — server-side because Claude can't easily reach EDGAR programmatically
+6. **Stretch:** `rich` tables for prettier `probe stats` output
+7. **Stretch:** Contextual retrieval (prepend chunk context before embedding, Anthropic pattern)
 
-**End of Day 3:** Claude Code can query your research index via MCP. You have a working end-to-end pipeline.
+**End of Day 3:** Claude Code calls Probe's MCP tools to ingest, search, and reason over your research index. The slash-command UX (`/thesis ...`) wraps the heavier MCP tools for one-shot reasoning.
 
 ---
 
@@ -423,12 +437,10 @@ name = "probe"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "typer>=0.12",
+    "typer>=0.12",                 # `probe serve` / `probe stats` only
     "rich>=13",
-    "httpx>=0.27",
-    "beautifulsoup4>=4.12",
-    "pymupdf4llm>=0.0.17",
     "anthropic>=0.42",
+    "mcp>=1.0",                    # stdio MCP server
     "sentence-transformers>=3",
     "sqlite-vec>=0.1",
     "numpy>=1.26",
@@ -440,14 +452,18 @@ dependencies = [
 probe = "probe.cli:app"
 ```
 
+Dropped from the original list: `httpx`, `beautifulsoup4`, `pymupdf4llm`. The server doesn't fetch URLs or parse binary formats — Claude does both client-side and passes the result through `ingest`.
+
 ---
 
 ## What NOT to Build (Weekend Scope)
 
-- No web UI — CLI only
+- No web UI — MCP server only; Claude Code is the UI
+- No human-facing CLI for ingest/search/extract/analyze — those are MCP tools, not commands. The CLI is `probe serve` (+ `probe stats` for debugging)
+- No server-side URL fetching or HTML/PDF parsing — Claude parses client-side and passes markdown + provenance through `ingest`
 - No user auth — single user, local files
 - No Postgres/Chroma/Pinecone — sqlite-vec only
 - No async ingestion pipeline — synchronous is fine for personal use
-- No automatic re-indexing on prompt changes — manual `probe extract` re-run
+- No automatic re-indexing on prompt changes — manual `extract` re-run via MCP
 - No fancy chunking (late chunking, contextual retrieval) in v1 — recursive 400-token split
 - No EDGAR integration in v1 unless Day 3 goes fast — add via `edgartools` later
