@@ -6,6 +6,7 @@ from typing import Optional
 
 from probe.markdown_split import split_markdown
 from probe.data_classes import Chunk, Document, IngestResult, Provenance
+from probe.embeddings import embed_batch, to_blob
 
 _MAX_CHARS = 1600
 _KNOWN_SOURCE_TYPES = {"markdown", "tweet", "web", "pdf"}
@@ -170,6 +171,9 @@ def ingest(content: str, provenance: Provenance, source_type: str) -> IngestResu
             "content may be empty or whitespace-only"
         )
 
+    texts = [text for _, text in filtered]
+    matrix = embed_batch(texts)
+
     chunks = [
         Chunk(
             id=str(uuid.uuid4()),
@@ -178,7 +182,7 @@ def ingest(content: str, provenance: Provenance, source_type: str) -> IngestResu
             section=section,
             chunk_index=idx,
             metadata=dict(chunk_metadata),
-            embedding=None,
+            embedding=to_blob(matrix[idx]),
         )
         for idx, (section, text) in enumerate(filtered)
     ]

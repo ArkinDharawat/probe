@@ -41,3 +41,11 @@ class Chunk:
 class IngestResult:
     document: Document
     chunks: list[Chunk]
+
+
+@dataclass
+class SearchResult:
+    chunk_id: str
+    document_id: str
+    content: str
+    score: float
