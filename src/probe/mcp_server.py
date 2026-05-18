@@ -36,6 +36,9 @@ def handle_ingest(
     }
 
 
+# Convention: row access throughout this module uses positional indexing (r[0],
+# r[1], ...) to match search.py and ingest.py. SELECT column order MUST match
+# the unpacking order below. Do not switch to sqlite3.Row in isolation.
 def handle_get_document(conn: sqlite3.Connection, doc_id: str) -> dict[str, Any] | None:
     row = conn.execute(
         "SELECT id, source_type, source_url, title, author, published_at, "
@@ -155,6 +158,7 @@ def run() -> None:
         ),
     )
     def get_document_tool(doc_id: str) -> dict | None:
+        # None is serialized as JSON null by mcp>=1.0,<2 (pinned in pyproject.toml); do not relax that pin without revisiting the not-found contract.
         return handle_get_document(conn, doc_id)
 
     server.run(transport="stdio")
