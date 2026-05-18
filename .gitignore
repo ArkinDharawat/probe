@@ -23,3 +23,6 @@ config.local.yaml
 
 # Local-only scratch scripts
 scripts/
+
+# Captured MCP ingest payloads — kept locally as Day 3 ground truth, not pushed
+tests/fixtures/payloads/
