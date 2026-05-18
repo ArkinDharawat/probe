@@ -146,3 +146,36 @@ def test_all_chunks_link_back_to_document():
     )
     uuid.UUID(result.document.id)  # raises ValueError if not a valid UUID
     assert all(c.document_id == result.document.id for c in result.chunks)
+
+
+def test_ingest_lifts_published_from_metadata():
+    result = ingest(
+        content="BERT abstract body",
+        provenance=Provenance(
+            source_url="https://arxiv.org/abs/1810.04805",
+            metadata={"published": "2018-10-11"},
+        ),
+        source_type="arxiv_paper",
+    )
+    assert result.document.published_at == "2018-10-11"
+
+
+def test_ingest_prefers_published_at_over_published():
+    result = ingest(
+        content="some body",
+        provenance=Provenance(
+            source_url="https://example.com",
+            metadata={"published_at": "2024-01-15", "published": "2024-01-01"},
+        ),
+        source_type="web",
+    )
+    assert result.document.published_at == "2024-01-15"
+
+
+def test_ingest_published_at_is_none_when_metadata_omits_it():
+    result = ingest(
+        content="some body",
+        provenance=Provenance(source_url="https://example.com"),
+        source_type="web",
+    )
+    assert result.document.published_at is None

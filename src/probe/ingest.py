@@ -152,17 +152,23 @@ def ingest(content: str, provenance: Provenance, source_type: str) -> IngestResu
         for text in _generic_chunks(content):
             raw_sections.append((None, text))
 
+    # Lift published_at from metadata so it lands in the indexed column. Real
+    # capture: Claude sends arXiv dates as metadata["published"] (and some
+    # callers may use metadata["published_at"]). Prefer the exact-column key.
+    meta = provenance.metadata or {}
+    published_at = meta.get("published_at") or meta.get("published")
+
     document = Document(
         id=doc_id,
         source_type=source_type,
         source_url=provenance.source_url,
         title=title,
         author=provenance.author,
-        published_at=None,
+        published_at=published_at,
         accessed_at=accessed_at,
         description=None,
         raw_path=provenance.raw_path,
-        metadata=provenance.metadata or {},
+        metadata=meta,
     )
 
     chunk_metadata = (provenance.metadata or {}) if source_type == "pdf" else {}
