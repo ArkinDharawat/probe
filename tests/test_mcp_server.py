@@ -290,3 +290,204 @@ def test_handle_get_document_empty_extractions_and_analyses(db):
     detail = handle_get_document(db, result["document_id"])
     assert detail["extractions"] == []
     assert detail["analyses"] == []
+
+
+# ---------- handle_extract ----------
+
+def _stub_general_output():
+    return {
+        "main_topic": "palantir moat",
+        "key_points": ["government data analytics"],
+        "entities_mentioned": ["Palantir"],
+        "author_stance": "bullish",
+    }
+
+
+def _stub_paper_output():
+    return {
+        "claimed_contribution": "x",
+        "method": "y",
+        "key_findings": [],
+        "baselines": [],
+        "limitations": [],
+        "builds_on": [],
+    }
+
+
+def test_handle_extract_persists_extraction(db, sample_md_text, sample_md_path, monkeypatch):
+    from probe.mcp_server import handle_extract, handle_ingest
+
+    stub = _stub_general_output()
+    monkeypatch.setattr("probe.extraction.general.run", lambda content: stub)
+
+    ingested = handle_ingest(
+        db,
+        content=sample_md_text,
+        provenance={"raw_path": str(sample_md_path)},
+        source_type="markdown",
+    )
+
+    result = handle_extract(db, ingested["document_id"])
+
+    assert result["extraction_type"] == "general"
+    assert result["output"] == stub
+
+
+def test_handle_extract_override_extraction_type(db, sample_md_text, sample_md_path, monkeypatch):
+    from probe.mcp_server import handle_extract, handle_ingest
+
+    general_stub = _stub_general_output()
+    paper_stub = _stub_paper_output()
+
+    paper_calls = {"n": 0}
+
+    def fake_paper_run(content):
+        paper_calls["n"] += 1
+        return paper_stub
+
+    monkeypatch.setattr("probe.extraction.general.run", lambda content: general_stub)
+    monkeypatch.setattr("probe.extraction.paper.run", fake_paper_run)
+
+    ingested = handle_ingest(
+        db,
+        content=sample_md_text,
+        provenance={"raw_path": str(sample_md_path)},
+        source_type="markdown",
+    )
+
+    result = handle_extract(db, ingested["document_id"], extraction_type="general")
+
+    assert result["extraction_type"] == "general"
+    assert result["output"] == general_stub
+    assert paper_calls["n"] == 0
+
+
+# ---------- handle_analyze ----------
+
+def _stub_structured_call(result):
+    def _fn(**kwargs):
+        return result
+    return _fn
+
+
+def _valid_analyze_llm_result():
+    return {
+        "connections": ["a connects to b"],
+        "new_information": ["new fact"],
+        "contradictions": [],
+        "open_questions": ["what next?"],
+    }
+
+
+def test_handle_analyze_persists_analysis(db, sample_md_text, sample_md_path, monkeypatch):
+    from probe.mcp_server import handle_analyze, handle_extract, handle_ingest
+
+    monkeypatch.setattr("probe.extraction.general.run", lambda content: _stub_general_output())
+    monkeypatch.setattr(
+        "probe.analysis.structured_call", _stub_structured_call(_valid_analyze_llm_result())
+    )
+    monkeypatch.setattr("probe.analysis.hybrid_search", lambda conn, q, n: [])
+
+    ingested = handle_ingest(
+        db,
+        content=sample_md_text,
+        provenance={"raw_path": str(sample_md_path)},
+        source_type="markdown",
+    )
+    doc_id = ingested["document_id"]
+    handle_extract(db, doc_id)
+
+    result = handle_analyze(db, doc_id)
+
+    expected_keys = {
+        "id",
+        "document_id",
+        "connections",
+        "new_information",
+        "contradictions",
+        "open_questions",
+        "rag_context_ids",
+        "prompt_version",
+        "created_at",
+    }
+    assert expected_keys <= set(result.keys())
+
+
+def test_handle_analyze_raises_without_prior_extract(db, sample_md_text, sample_md_path):
+    from probe.mcp_server import handle_analyze, handle_ingest
+
+    ingested = handle_ingest(
+        db,
+        content=sample_md_text,
+        provenance={"raw_path": str(sample_md_path)},
+        source_type="markdown",
+    )
+
+    with pytest.raises(RuntimeError):
+        handle_analyze(db, ingested["document_id"])
+
+
+# ---------- handle_list_theses ----------
+
+def test_handle_list_theses_returns_only_active_by_default(db):
+    from probe.mcp_server import handle_list_theses
+    from probe.thesis import create_thesis, update_thesis
+
+    create_thesis(db, name="t1", core_claim="claim 1")
+    create_thesis(db, name="t2", core_claim="claim 2")
+    archived_id = create_thesis(db, name="t3", core_claim="claim 3")
+    update_thesis(db, archived_id, status="archived")
+
+    active = handle_list_theses(db)
+    archived = handle_list_theses(db, "archived")
+
+    assert len(active) == 2
+    assert len(archived) == 1
+
+
+def test_handle_list_theses_empty(db):
+    from probe.mcp_server import handle_list_theses
+
+    assert handle_list_theses(db) == []
+
+
+# ---------- handle_evaluate_thesis ----------
+
+def _valid_evaluate_llm_result():
+    return {
+        "verdict": "supported",
+        "reasoning": "because reasons",
+        "supporting": [],
+        "contradicting": [],
+    }
+
+
+def test_handle_evaluate_thesis_id_path(db, monkeypatch):
+    from probe.mcp_server import handle_evaluate_thesis
+    from probe.thesis import create_thesis
+
+    monkeypatch.setattr("probe.thesis.hybrid_search", lambda conn, q, n: [])
+    monkeypatch.setattr(
+        "probe.thesis.structured_call", _stub_structured_call(_valid_evaluate_llm_result())
+    )
+
+    thesis_id = create_thesis(db, name="t1", core_claim="margins will expand")
+
+    result = handle_evaluate_thesis(db, thesis_id)
+
+    assert result["thesis_id"] == thesis_id
+    assert result["claim"] == "margins will expand"
+
+
+def test_handle_evaluate_thesis_claim_path(db, monkeypatch):
+    from probe.mcp_server import handle_evaluate_thesis
+
+    monkeypatch.setattr("probe.thesis.hybrid_search", lambda conn, q, n: [])
+    monkeypatch.setattr(
+        "probe.thesis.structured_call", _stub_structured_call(_valid_evaluate_llm_result())
+    )
+
+    result = handle_evaluate_thesis(db, "ad-hoc claim text")
+
+    assert result["thesis_id"] is None
+    assert result["claim"] == "ad-hoc claim text"

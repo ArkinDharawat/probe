@@ -40,8 +40,15 @@ CREATE TABLE IF NOT EXISTS extractions (
     extraction_type TEXT NOT NULL,
     output TEXT NOT NULL,
     prompt_version TEXT,
-    created_at TEXT
+    created_at TEXT,
+    UNIQUE(document_id, extraction_type)
 );
+
+-- Backstop for DBs created before the inline UNIQUE: CREATE TABLE IF NOT EXISTS
+-- leaves an older extractions table without the composite UNIQUE intact, so
+-- extract()'s ON CONFLICT clause needs this index to match on the legacy path.
+CREATE UNIQUE INDEX IF NOT EXISTS extractions_doc_type
+    ON extractions(document_id, extraction_type);
 
 CREATE TABLE IF NOT EXISTS analyses (
     id TEXT PRIMARY KEY,

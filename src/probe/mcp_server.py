@@ -6,18 +6,27 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from probe.analysis import analyze as analyze_doc
 from probe.config import load
 from probe.data_classes import Provenance
 from probe.db import connect, persist
+from probe.extraction import extract as extract_doc
 from probe.ingest import ingest
 from probe.search import hybrid_search
+from probe.thesis import evaluate_thesis as evaluate_thesis_fn
+from probe.thesis import list_theses as list_theses_fn
 
 _PROVENANCE_FIELDS = {"source_url", "title", "author", "raw_path", "accessed_at", "metadata"}
 
 
 def _provenance_from_dict(data: dict[str, Any]) -> Provenance:
-    fields = {k: v for k, v in data.items() if k in _PROVENANCE_FIELDS}
-    return Provenance(**fields)
+    # Reject unknown keys instead of silently dropping them: a camelCase typo
+    # like `sourceUrl` would otherwise be swallowed and the downstream
+    # "no source_url and no raw_path" error would point at the wrong cause.
+    unknown = set(data) - _PROVENANCE_FIELDS
+    if unknown:
+        raise ValueError(f"unknown provenance fields: {sorted(unknown)}")
+    return Provenance(**data)
 
 
 def handle_ingest(
@@ -126,6 +135,26 @@ def handle_search(conn: sqlite3.Connection, query: str, limit: int = 5) -> list[
     ]
 
 
+def handle_extract(
+    conn: sqlite3.Connection,
+    doc_id: str,
+    extraction_type: str | None = None,
+) -> dict[str, Any]:
+    return extract_doc(conn, doc_id, extraction_type=extraction_type)
+
+
+def handle_analyze(conn: sqlite3.Connection, doc_id: str) -> dict[str, Any]:
+    return analyze_doc(conn, doc_id)
+
+
+def handle_list_theses(conn: sqlite3.Connection, status: str = "active") -> list[dict[str, Any]]:
+    return list_theses_fn(conn, status=status)
+
+
+def handle_evaluate_thesis(conn: sqlite3.Connection, claim_or_id: str) -> dict[str, Any]:
+    return evaluate_thesis_fn(conn, claim_or_id)
+
+
 def run() -> None:
     config = load()
     # Single connection: stdio MCP is serial, so reuse avoids per-call open/close overhead.
@@ -160,5 +189,43 @@ def run() -> None:
     def get_document_tool(doc_id: str) -> dict | None:
         # None is serialized as JSON null by mcp>=1.0,<2 (pinned in pyproject.toml); do not relax that pin without revisiting the not-found contract.
         return handle_get_document(conn, doc_id)
+
+    @server.tool(
+        name="extract",
+        description=(
+            "Run domain-specific structured extraction (paper/financial/general) "
+            "on a stored document. Auto-routes by source_type unless extraction_type "
+            "is set explicitly. Upserts the result."
+        ),
+    )
+    def extract_tool(doc_id: str, extraction_type: str | None = None) -> dict:
+        return handle_extract(conn, doc_id, extraction_type)
+
+    @server.tool(
+        name="analyze",
+        description=(
+            "RAG analysis of a stored document against the personal knowledge base. "
+            "Requires a prior extract() call on the document."
+        ),
+    )
+    def analyze_tool(doc_id: str) -> dict:
+        return handle_analyze(conn, doc_id)
+
+    @server.tool(
+        name="list_theses",
+        description="List stored investment/research theses filtered by status (default: active).",
+    )
+    def list_theses_tool(status: str = "active") -> list[dict]:
+        return handle_list_theses(conn, status)
+
+    @server.tool(
+        name="evaluate_thesis",
+        description=(
+            "Judge a thesis against the personal knowledge base via RAG. "
+            "Accepts either a stored thesis_id or an ad-hoc claim string."
+        ),
+    )
+    def evaluate_thesis_tool(claim_or_id: str) -> dict:
+        return handle_evaluate_thesis(conn, claim_or_id)
 
     server.run(transport="stdio")
