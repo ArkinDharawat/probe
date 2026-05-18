@@ -94,9 +94,22 @@ probe stats      # print doc / chunk / extraction / analysis / thesis counts (de
 
 ## MCP tools exposed
 
-Day 2 (now):
-
 - `ingest(content, provenance, source_type)` — chunk + persist already-parsed markdown with provenance
 - `search_personal_knowledge(query, limit)` — hybrid sqlite-vec + FTS5 search merged via RRF
+- `get_document(doc_id)` — full document with all chunks, extractions, and analyses
+- `extract(doc_id, extraction_type=None)` — domain-specific structured extraction (paper / financial / general); auto-routed by `source_type` unless overridden; upserts the result
+- `analyze(doc_id)` — RAG analysis connecting the doc to existing knowledge (requires a prior `extract` call)
+- `list_theses(status="active")` — list stored research theses
+- `evaluate_thesis(claim_or_id)` — judge a stored thesis or ad-hoc claim against the knowledge base via RAG
 
-Day 3 (deferred): `get_document`, `extract`, `analyze`, `evaluate_thesis`, `list_theses`, `add_note`.
+---
+
+## Claude Code slash commands
+
+`.claude/commands/thesis.md` wraps `evaluate_thesis` for one-shot reasoning. Once Probe is wired in as an MCP server, run:
+
+```
+/thesis Palantir will trade above $50 by end of year
+```
+
+Claude Code calls `evaluate_thesis(claim_or_id="Palantir will trade above $50 by end of year")`, which RAG-searches your personal index and returns a structured verdict with supporting and contradicting chunks. The argument can also be a stored thesis id from `list_theses`.
