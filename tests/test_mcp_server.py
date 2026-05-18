@@ -200,3 +200,93 @@ def test_handle_search_results_sorted_descending_by_score(db):
     assert len(results) >= 2
     scores = [r["score"] for r in results]
     assert scores == sorted(scores, reverse=True)
+
+
+# ---------- handle_get_document ----------
+
+def test_handle_get_document_returns_none_for_missing_id(db):
+    from probe.mcp_server import handle_get_document
+
+    assert handle_get_document(db, "does-not-exist") is None
+
+
+def test_handle_get_document_returns_document_fields(db, sample_md_text, sample_md_path):
+    from probe.mcp_server import handle_get_document, handle_ingest
+
+    result = handle_ingest(
+        db,
+        content=sample_md_text,
+        provenance={"raw_path": str(sample_md_path)},
+        source_type="markdown",
+    )
+    doc_id = result["document_id"]
+
+    detail = handle_get_document(db, doc_id)
+
+    assert detail is not None
+    doc = detail["document"]
+    assert doc["id"] == doc_id
+    assert doc["source_type"] == "markdown"
+    assert doc["title"] == "Palantir Bull Case"
+
+
+def test_handle_get_document_chunks_match_ingest_count(db, sample_md_text, sample_md_path):
+    from probe.mcp_server import handle_get_document, handle_ingest
+
+    result = handle_ingest(
+        db,
+        content=sample_md_text,
+        provenance={"raw_path": str(sample_md_path)},
+        source_type="markdown",
+    )
+    doc_id = result["document_id"]
+
+    detail = handle_get_document(db, doc_id)
+
+    assert len(detail["chunks"]) == result["chunk_count"]
+
+
+def test_handle_get_document_chunks_ordered_by_index(db):
+    from probe.mcp_server import handle_get_document, handle_ingest
+
+    body = "\n\n".join(f"## Section {i}\nContent for section {i}." for i in range(5))
+    result = handle_ingest(
+        db,
+        content=f"# My Notes\n\n{body}\n",
+        provenance={"source_url": "https://example.com/notes"},
+        source_type="markdown",
+    )
+
+    detail = handle_get_document(db, result["document_id"])
+    indices = [c["chunk_index"] for c in detail["chunks"]]
+    assert indices == sorted(indices)
+
+
+def test_handle_get_document_chunk_has_expected_keys(db):
+    from probe.mcp_server import handle_get_document, handle_ingest
+
+    result = handle_ingest(
+        db,
+        content="# Title\n\n## Section\nSome content here.",
+        provenance={"source_url": "https://example.com/doc"},
+        source_type="markdown",
+    )
+
+    detail = handle_get_document(db, result["document_id"])
+    chunk = detail["chunks"][0]
+    assert set(chunk.keys()) == {"id", "section", "chunk_index", "content", "metadata"}
+
+
+def test_handle_get_document_empty_extractions_and_analyses(db):
+    from probe.mcp_server import handle_get_document, handle_ingest
+
+    result = handle_ingest(
+        db,
+        content="A short web post.",
+        provenance={"source_url": "https://example.com/post"},
+        source_type="web",
+    )
+
+    detail = handle_get_document(db, result["document_id"])
+    assert detail["extractions"] == []
+    assert detail["analyses"] == []
