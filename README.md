@@ -25,9 +25,9 @@ pip install -e ".[dev]"
 
 This installs `probe` in editable mode along with test and lint tools (`pytest`, `ruff`).
 
-### 3. Configure API keys (optional)
+### 3. Configure API keys
 
-`~/.probe/config.yaml` is optional — all defaults work for Day 2 (ingest + search). The DB lands at `~/.probe/probe.db` and no API key is needed until Day 3 (extraction / analysis). To override defaults:
+`~/.probe/config.yaml` is optional for `ingest` and `search_personal_knowledge` — those run fully locally and the DB lands at `~/.probe/probe.db` by default. An `ANTHROPIC_API_KEY` (env var or config file) is required for `extract`, `analyze`, and `evaluate_thesis`. To override defaults:
 
 ```bash
 mkdir -p ~/.probe
@@ -97,10 +97,10 @@ probe stats      # print doc / chunk / extraction / analysis / thesis counts (de
 - `ingest(content, provenance, source_type)` — chunk + persist already-parsed markdown with provenance
 - `search_personal_knowledge(query, limit)` — hybrid sqlite-vec + FTS5 search merged via RRF
 - `get_document(doc_id)` — full document with all chunks, extractions, and analyses
-- `extract(doc_id, extraction_type=None)` — domain-specific structured extraction (paper / financial / general); auto-routed by `source_type` unless overridden; upserts the result
-- `analyze(doc_id)` — RAG analysis connecting the doc to existing knowledge (requires a prior `extract` call)
-- `list_theses(status="active")` — list stored research theses
-- `evaluate_thesis(claim_or_id)` — judge a stored thesis or ad-hoc claim against the knowledge base via RAG
+- `extract(doc_id, extraction_type=None)` — domain-specific structured extraction (paper / financial / general); auto-routed by `source_type` unless overridden; upserts on `(document_id, extraction_type)`
+- `analyze(doc_id)` — RAG analysis connecting the doc to existing knowledge; requires a prior `extract` call on the same doc
+- `list_theses(status="active")` — list stored research theses by status
+- `evaluate_thesis(claim_or_id)` — judge a stored thesis (by id) or ad-hoc claim string against the knowledge base via RAG, returning a verdict plus supporting / contradicting chunks
 
 ---
 
