@@ -20,8 +20,13 @@ _PROVENANCE_FIELDS = {"source_url", "title", "author", "raw_path", "accessed_at"
 
 
 def _provenance_from_dict(data: dict[str, Any]) -> Provenance:
-    fields = {k: v for k, v in data.items() if k in _PROVENANCE_FIELDS}
-    return Provenance(**fields)
+    # Reject unknown keys instead of silently dropping them: a camelCase typo
+    # like `sourceUrl` would otherwise be swallowed and the downstream
+    # "no source_url and no raw_path" error would point at the wrong cause.
+    unknown = set(data) - _PROVENANCE_FIELDS
+    if unknown:
+        raise ValueError(f"unknown provenance fields: {sorted(unknown)}")
+    return Provenance(**data)
 
 
 def handle_ingest(

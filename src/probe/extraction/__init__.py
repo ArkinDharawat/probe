@@ -53,6 +53,10 @@ def extract(conn, doc_id: str, *, extraction_type: str | None = None) -> dict[st
         "SELECT content FROM chunks WHERE document_id = ? ORDER BY chunk_index",
         (doc_id,),
     ).fetchall()
+    if not chunk_rows:
+        # Without chunks the LLM has nothing to ground on and will fabricate a
+        # structured response from an empty prompt; refuse instead of writing it.
+        raise RuntimeError(f"Document {doc_id} has no chunks; re-ingest before extracting.")
     joined = "\n\n".join(r[0] for r in chunk_rows)
 
     module = _MODULES[resolved_type]

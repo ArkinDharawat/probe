@@ -189,9 +189,22 @@ def _build_context(results) -> str:
     return "\n\n".join(blocks)
 
 
+def _looks_like_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
+
+
 def evaluate_thesis(conn: sqlite3.Connection, claim_or_id: str) -> dict:
-    thesis = get_thesis(conn, claim_or_id)
-    if thesis is not None:
+    # UUID-shape decides the routing: a UUID is unambiguously an id, so a miss
+    # must raise rather than silently degrade to an ad-hoc claim (which would
+    # mask typos and leave the intended thesis's last_evaluated stale).
+    if _looks_like_uuid(claim_or_id):
+        thesis = get_thesis(conn, claim_or_id)
+        if thesis is None:
+            raise KeyError(claim_or_id)
         claim = thesis["core_claim"]
         thesis_id: str | None = thesis["id"]
     else:

@@ -47,8 +47,29 @@ def structured_call(
 
     response = client.messages.create(**kwargs)
 
+    # `max_tokens` (or other non-terminal stops) can leave a tool_use block
+    # present but with a truncated `input` dict. Surface that explicitly rather
+    # than letting downstream code KeyError on a missing field.
+    stop_reason = getattr(response, "stop_reason", None)
+    if stop_reason not in (None, "tool_use", "end_turn"):
+        raise RuntimeError(
+            f"Anthropic returned stop_reason={stop_reason!r}; structured output may be incomplete."
+        )
+
     for block in response.content:
         if getattr(block, "type", None) == "tool_use" and getattr(block, "name", None) == "structured_output":
-            return block.input
+            payload = block.input
+            if not isinstance(payload, dict):
+                raise RuntimeError(
+                    f"Anthropic structured_output block had non-dict input: {type(payload).__name__}"
+                )
+            required = output_schema.get("required") if isinstance(output_schema, dict) else None
+            if required:
+                missing = [k for k in required if k not in payload]
+                if missing:
+                    raise RuntimeError(
+                        f"Anthropic structured_output missing required fields: {missing}"
+                    )
+            return payload
 
     raise RuntimeError("Anthropic response did not contain a structured_output tool_use block.")
