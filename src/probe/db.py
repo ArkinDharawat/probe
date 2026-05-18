@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS extractions (
     extraction_type TEXT NOT NULL,
     output TEXT NOT NULL,
     prompt_version TEXT,
-    created_at TEXT
+    created_at TEXT,
+    UNIQUE(document_id, extraction_type)
 );
 
 CREATE TABLE IF NOT EXISTS analyses (
