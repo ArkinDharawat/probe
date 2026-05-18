@@ -77,13 +77,13 @@ def handle_get_document(conn: sqlite3.Connection, doc_id: str) -> dict[str, Any]
         {
             "id": r[0],
             "extraction_type": r[1],
-            "output": json.loads(r[2]) if r[2] else {},
+            "output": json.loads(r[2]),
             "prompt_version": r[3],
             "created_at": r[4],
         }
         for r in conn.execute(
             "SELECT id, extraction_type, output, prompt_version, created_at "
-            "FROM extractions WHERE document_id = ? ORDER BY created_at",
+            "FROM extractions WHERE document_id = ? ORDER BY created_at, id",
             (doc_id,),
         ).fetchall()
     ]
@@ -91,7 +91,7 @@ def handle_get_document(conn: sqlite3.Connection, doc_id: str) -> dict[str, Any]
     analyses = [
         {
             "id": r[0],
-            "connections": json.loads(r[1]) if r[1] else [],
+            "connections": json.loads(r[1]),
             "new_information": json.loads(r[2]) if r[2] else [],
             "contradictions": json.loads(r[3]) if r[3] else [],
             "open_questions": json.loads(r[4]) if r[4] else [],
@@ -102,7 +102,7 @@ def handle_get_document(conn: sqlite3.Connection, doc_id: str) -> dict[str, Any]
         for r in conn.execute(
             "SELECT id, connections, new_information, contradictions, open_questions, "
             "rag_context_ids, prompt_version, created_at "
-            "FROM analyses WHERE document_id = ? ORDER BY created_at",
+            "FROM analyses WHERE document_id = ? ORDER BY created_at, id",
             (doc_id,),
         ).fetchall()
     ]
