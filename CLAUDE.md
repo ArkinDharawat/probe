@@ -30,7 +30,7 @@ Everything else (ingest, search, extract, analyze, thesis) is an **MCP tool**, n
 - `probe serve` boots the stdio MCP server with a single sqlite connection at server scope (shared across tool calls in the process).
 - `probe stats` is the only out-of-band debug command: prints doc / chunk / extraction / analysis / thesis counts.
 - Config is loaded via `probe.config.load()` which resolves `~/.probe/config.yaml` (optional) and defaults the DB path to `~/.probe/probe.db`.
-- Day 2 MCP tool surface is intentionally minimal: `ingest` and `search_personal_knowledge`. Day 3 adds `get_document`, `extract`, `analyze`, `evaluate_thesis`, `list_theses`, `add_note`.
+- Day 2 MCP tool surface is intentionally minimal: `ingest` and `search_personal_knowledge`. Day 3 adds `get_document`, `extract`, `analyze`, `evaluate_thesis`, `list_theses`.
 
 ## Tech Stack
 
